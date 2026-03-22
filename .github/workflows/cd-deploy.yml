@@ -1,0 +1,212 @@
+# =============================================================================
+# CD Pipeline — Deploy Infrastructure
+# =============================================================================
+# Deploys Terraform infrastructure for a given environment.
+#
+# Trigger options:
+#   1. Automatically on push to main (deploys dev)
+#   2. Manually via workflow_dispatch (choose dev or prod)
+#
+# Flow:
+#   Plan → (manual approval for prod) → Apply
+#
+# Prerequisites:
+#   Set these GitHub repository secrets:
+#     - AZURE_CLIENT_ID          (service principal app ID)
+#     - AZURE_CLIENT_SECRET      (service principal password)
+#     - AZURE_SUBSCRIPTION_ID    (target subscription)
+#     - AZURE_TENANT_ID          (Azure AD tenant)
+#
+# For OIDC (recommended, no secrets needed):
+#   Replace the az login step with azure/login@v2 using OIDC.
+#   See: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure
+# =============================================================================
+
+name: CD — Deploy Infrastructure
+
+on:
+  # Auto-deploy dev on push to main
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+
+  # Manual trigger — choose environment
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - prod
+      action:
+        description: "Terraform action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+# Only one deployment at a time per environment
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false # Don't cancel in-progress deploys!
+
+env:
+  TF_VERSION: "1.5"
+  # Determine environment: manual input or default to dev
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  # Determine action: manual input or default to apply
+  ACTION: ${{ github.event.inputs.action || 'apply' }}
+
+jobs:
+  # ===========================================================================
+  # Job 1: Terraform Plan
+  # ===========================================================================
+  plan:
+    name: "Plan — ${{ github.event.inputs.environment || 'dev' }}"
+    runs-on: ubuntu-latest
+
+    # Use GitHub Environments for environment-specific secrets and protection rules
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+
+    # Make plan output available to the apply job
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # -----------------------------------------------------------------------
+      # Azure Login — authenticate with service principal
+      # In production, switch to OIDC (federated credentials) for better security
+      # -----------------------------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      # Set ARM environment variables for the AzureRM Terraform provider
+      - name: Set Terraform Azure credentials
+        run: |
+          echo "ARM_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=${{ secrets.AZURE_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          if [ "${{ env.ACTION }}" = "destroy" ]; then
+            terraform plan -destroy -out=tfplan -detailed-exitcode || echo "exitcode=$?" >> $GITHUB_OUTPUT
+          else
+            terraform plan -out=tfplan -detailed-exitcode || echo "exitcode=$?" >> $GITHUB_OUTPUT
+          fi
+
+      # -----------------------------------------------------------------------
+      # Post plan summary as a PR comment (helpful for code review)
+      # -----------------------------------------------------------------------
+      - name: Upload plan artifact
+        if: env.ACTION != 'plan'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: terraform/environments/${{ env.ENVIRONMENT }}/tfplan
+          retention-days: 1
+
+  # ===========================================================================
+  # Job 2: Terraform Apply
+  # ===========================================================================
+  apply:
+    name: "Apply — ${{ github.event.inputs.environment || 'dev' }}"
+    runs-on: ubuntu-latest
+    needs: plan
+    if: ${{ github.event.inputs.action != 'plan' }}
+
+    # For prod, configure a GitHub Environment with required reviewers
+    # This adds a manual approval gate before prod changes are applied
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Set Terraform Azure credentials
+        run: |
+          echo "ARM_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=${{ secrets.AZURE_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: terraform/environments/${{ env.ENVIRONMENT }}
+
+      # -----------------------------------------------------------------------
+      # Apply the saved plan — this is the only step that modifies Azure
+      # -----------------------------------------------------------------------
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      # -----------------------------------------------------------------------
+      # Output key values for downstream use (e.g., data generator, notebooks)
+      # -----------------------------------------------------------------------
+      - name: Show outputs
+        run: |
+          echo "## Deployment Outputs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Output | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | $(terraform output -raw resource_group_name) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage Account | $(terraform output -raw storage_account_name) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Databricks URL | $(terraform output -raw databricks_workspace_url) |" >> $GITHUB_STEP_SUMMARY

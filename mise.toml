@@ -1,0 +1,492 @@
+# =============================================================================
+# mise — Tool Version Manager & Task Runner
+# =============================================================================
+# mise (https://mise.jdx.dev) replaces Makefile, nvm, pyenv, tfenv, etc.
+# It manages tool versions AND provides a task runner in one config file.
+#
+# Install mise:
+#   curl https://mise.run | sh
+#   # or: brew install mise
+#
+# Quick start:
+#   mise install          # Install all tools defined below
+#   mise run setup        # One-time project setup
+#   mise run validate     # Run all CI checks locally
+#   mise tasks            # List all available tasks
+#
+# Why mise over Makefile?
+#   - Manages tool versions (Terraform, Python) — everyone uses the same version
+#   - Better task dependencies and descriptions
+#   - Cross-platform (no GNU Make quirks on macOS/Windows)
+#   - File watching support
+#   - Environment variable management
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Tool versions — mise installs and activates these automatically
+# Everyone on the team gets the same versions — no more "works on my machine"
+# ---------------------------------------------------------------------------
+[tools]
+terraform = "1.14.7"
+python = "3.11"
+
+# ---------------------------------------------------------------------------
+# Environment variables — loaded automatically when you cd into this project
+# ---------------------------------------------------------------------------
+[env]
+# Default environment for tasks (override with: ENVIRONMENT=prod mise run ...)
+ENVIRONMENT = "dev"
+# Python virtual env location
+VIRTUAL_ENV = "{{config_root}}/data_generator/.venv"
+
+# =============================================================================
+# TASKS — run with: mise run <task_name>
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Setup & Bootstrap
+# ---------------------------------------------------------------------------
+
+[tasks.setup]
+description = "One-time project setup: install tools, create venv, install deps"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Setting up Azure Databricks Platform Demo ==="
+echo ""
+
+echo "1/3 — Checking tool versions..."
+echo "  Terraform: $(terraform version -json | python3 -c 'import sys,json; print(json.load(sys.stdin)["terraform_version"])' 2>/dev/null || terraform version | head -1)"
+echo "  Python:    $(python3 --version)"
+echo ""
+
+echo "2/3 — Setting up Python virtual environment..."
+cd data_generator
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip -q
+pip install -r requirements.txt -q
+pip install ruff -q
+echo "  ✓ Virtual environment ready at data_generator/.venv"
+echo ""
+
+echo "3/3 — Initializing Terraform..."
+for env in shared dev prod unity-catalog; do
+  echo "  Initializing $env..."
+  (cd ../terraform/environments/$env && terraform init -backend=false -input=false) 2>&1 | tail -1
+done
+echo ""
+
+echo "=== Setup complete! ==="
+echo ""
+echo "Next steps:"
+echo "  mise run validate        # Run all checks"
+echo "  mise run deploy          # Deploy dev infrastructure"
+echo "  mise run generate        # Generate sample data"
+echo "  mise tasks               # See all available tasks"
+"""
+
+# ---------------------------------------------------------------------------
+# Validation (CI-equivalent tasks)
+# ---------------------------------------------------------------------------
+
+[tasks."validate"]
+description = "Run all validation checks (Terraform + Python) — same as CI"
+depends = ["validate:terraform", "validate:python"]
+
+[tasks."validate:terraform"]
+description = "Validate Terraform formatting and syntax for all environments"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Terraform Validation ==="
+echo ""
+
+echo "Checking formatting..."
+if terraform fmt -check -recursive terraform/; then
+  echo "  ✓ All files formatted correctly"
+else
+  echo "  ✗ Files need formatting. Run: mise run fmt"
+  exit 1
+fi
+echo ""
+
+for env in shared dev prod unity-catalog; do
+  echo "Validating $env environment..."
+  cd terraform/environments/$env
+  terraform init -backend=false -input=false -no-color 2>/dev/null
+  terraform validate -no-color
+  echo "  ✓ $env is valid"
+  cd ../../..
+done
+
+echo ""
+echo "=== Terraform validation passed ==="
+"""
+
+[tasks."validate:python"]
+description = "Lint Python code and dry-run the data generator"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Python Validation ==="
+echo ""
+
+# Activate venv
+source data_generator/.venv/bin/activate 2>/dev/null || {
+  echo "Virtual environment not found. Run: mise run setup"
+  exit 1
+}
+
+echo "Linting with Ruff..."
+ruff check data_generator/ databricks/
+echo "  ✓ No lint errors"
+echo ""
+
+echo "Dry-run data generator..."
+cd data_generator
+python generate_sensor_data.py --local-only --batches 2
+echo ""
+
+file_count=$(find sample_data -name '*.json' 2>/dev/null | wc -l)
+if [ "$file_count" -lt 1 ]; then
+  echo "  ✗ No data files generated!"
+  exit 1
+fi
+echo "  ✓ Generated $file_count JSON files"
+
+# Clean up
+rm -rf sample_data
+echo ""
+echo "=== Python validation passed ==="
+"""
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+
+[tasks.fmt]
+description = "Auto-format all Terraform and Python files"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Formatting Terraform files..."
+terraform fmt -recursive terraform/
+echo "  ✓ Terraform formatted"
+
+echo "Formatting Python files..."
+source data_generator/.venv/bin/activate 2>/dev/null || true
+ruff format data_generator/ databricks/ 2>/dev/null || echo "  (ruff format not available, skipping)"
+echo "  ✓ Python formatted"
+"""
+
+# ---------------------------------------------------------------------------
+# Infrastructure — Terraform
+# ---------------------------------------------------------------------------
+
+[tasks.plan]
+description = "Terraform plan for $ENVIRONMENT (default: dev). Use ENVIRONMENT=shared|unity-catalog for other layers."
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+env="${ENVIRONMENT:-dev}"
+
+echo "=== Terraform Plan ($env) ==="
+cd terraform/environments/$env
+terraform init -input=false -no-color 2>/dev/null
+terraform plan
+"""
+
+[tasks."deploy:shared"]
+description = "Deploy shared Unity Catalog Azure resources (once per region)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Deploying Shared Unity Catalog Infrastructure ==="
+cd terraform/environments/shared
+terraform init -input=false 2>/dev/null
+terraform plan -var-file=../../terraform.tfvars -out=tfplan
+echo ""
+read -p "Apply this plan? (yes/no): " confirm
+if [ "$confirm" = "yes" ]; then
+  terraform apply tfplan
+  rm -f tfplan
+  echo ""
+  echo "=== Shared infrastructure deployed ==="
+  terraform output
+else
+  rm -f tfplan
+  echo "Cancelled."
+fi
+"""
+
+[tasks."deploy:unity-catalog"]
+description = "Deploy Unity Catalog metastore + catalogs (requires shared, dev, and prod)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Deploying Unity Catalog (metastore + catalogs) ==="
+cd terraform/environments/unity-catalog
+terraform init -input=false 2>/dev/null
+
+# Gather outputs from other environments
+terraform plan -var-file=../../terraform.tfvars \
+  -var="access_connector_id=$(terraform -chdir=../shared output -raw access_connector_id)" \
+  -var="access_connector_principal_id=$(terraform -chdir=../shared output -raw access_connector_principal_id)" \
+  -var="metastore_storage_url=$(terraform -chdir=../shared output -raw metastore_storage_url)" \
+  -var="dev_workspace_url=$(terraform -chdir=../dev output -raw databricks_workspace_url)" \
+  -var="dev_workspace_id=$(terraform -chdir=../dev output -raw databricks_workspace_id)" \
+  -var="dev_storage_account_name=$(terraform -chdir=../dev output -raw storage_account_name)" \
+  -var="dev_storage_account_id=$(terraform -chdir=../dev output -raw storage_account_id)" \
+  -var="prod_workspace_url=$(terraform -chdir=../prod output -raw databricks_workspace_url)" \
+  -var="prod_workspace_id=$(terraform -chdir=../prod output -raw databricks_workspace_id)" \
+  -var="prod_storage_account_name=$(terraform -chdir=../prod output -raw storage_account_name)" \
+  -var="prod_storage_account_id=$(terraform -chdir=../prod output -raw storage_account_id)" \
+  -out=tfplan
+
+echo ""
+read -p "Apply this plan? (yes/no): " confirm
+if [ "$confirm" = "yes" ]; then
+  terraform apply tfplan
+  rm -f tfplan
+  echo ""
+  echo "=== Unity Catalog deployed ==="
+  terraform output
+else
+  rm -f tfplan
+  echo "Cancelled."
+fi
+"""
+
+[tasks.deploy]
+description = "Terraform apply for $ENVIRONMENT (default: dev)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+env="${ENVIRONMENT:-dev}"
+
+echo "=== Deploying $env ==="
+cd terraform/environments/$env
+terraform init -input=false 2>/dev/null
+terraform plan -out=tfplan
+echo ""
+read -p "Apply this plan? (yes/no): " confirm
+if [ "$confirm" = "yes" ]; then
+  terraform apply tfplan
+  rm -f tfplan
+  echo ""
+  echo "=== Deploy complete ==="
+  terraform output
+else
+  rm -f tfplan
+  echo "Cancelled."
+fi
+"""
+
+[tasks.destroy]
+description = "Terraform destroy for $ENVIRONMENT (default: dev). Use ENVIRONMENT=shared|unity-catalog for other layers."
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+env="${ENVIRONMENT:-dev}"
+
+echo "=== Destroying $env ==="
+echo "WARNING: This will delete all resources in the $env environment!"
+if [ "$env" = "shared" ]; then
+  echo "WARNING: Destroying shared infra will break Unity Catalog for ALL environments!"
+fi
+if [ "$env" = "unity-catalog" ]; then
+  echo "WARNING: This will remove the metastore and all catalogs/schemas!"
+fi
+echo ""
+cd terraform/environments/$env
+terraform destroy
+"""
+
+[tasks.outputs]
+description = "Show Terraform outputs for $ENVIRONMENT"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+env="${ENVIRONMENT:-dev}"
+cd terraform/environments/$env
+terraform output
+"""
+
+# ---------------------------------------------------------------------------
+# Data Generator
+# ---------------------------------------------------------------------------
+
+[tasks.generate]
+description = "Generate 10 batches of sensor data → ADLS (needs Azure creds)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source data_generator/.venv/bin/activate
+cd data_generator
+python generate_sensor_data.py --batches 10
+"""
+
+[tasks."generate:local"]
+description = "Generate sample data locally (no Azure credentials needed)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source data_generator/.venv/bin/activate
+cd data_generator
+python generate_sensor_data.py --local-only --batches 5
+"""
+
+[tasks."generate:continuous"]
+description = "Generate data continuously every 15s (Ctrl+C to stop)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source data_generator/.venv/bin/activate
+cd data_generator
+python generate_sensor_data.py --continuous --interval 15
+"""
+
+# ---------------------------------------------------------------------------
+# Full Demo Flow
+# ---------------------------------------------------------------------------
+
+[tasks.demo]
+description = "Full demo: setup → deploy dev → generate data → show outputs"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "============================================"
+echo "  Azure Databricks Platform Demo"
+echo "  Full walkthrough"
+echo "============================================"
+echo ""
+
+echo "Step 1: Deploying shared Unity Catalog infrastructure..."
+mise run deploy:shared
+echo ""
+
+echo "Step 2: Deploying dev infrastructure..."
+mise run deploy
+echo ""
+
+echo "Step 3: Deploying prod infrastructure..."
+ENVIRONMENT=prod mise run deploy
+echo ""
+
+echo "Step 4: Deploying Unity Catalog (metastore + catalogs)..."
+mise run deploy:unity-catalog
+echo ""
+
+echo "Step 5: Generating sample data..."
+mise run generate
+echo ""
+
+echo "Step 6: Show connection details..."
+mise run outputs
+echo ""
+
+echo "============================================"
+echo "  Demo infrastructure ready!"
+echo "  Next: Open Databricks and run the pipeline"
+echo "============================================"
+echo ""
+echo "Open Databricks workspace:"
+cd terraform/environments/dev
+echo "  https://$(terraform output -raw databricks_workspace_url)"
+echo ""
+echo "Then run notebooks in order:"
+echo "  1. 00_setup_storage_access"
+echo "  2. 04_run_full_pipeline"
+echo "  3. 05_smoke_tests"
+"""
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+[tasks.clean]
+description = "Remove local generated data, caches, and temp files"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Cleaning up..."
+rm -rf data_generator/sample_data
+rm -rf data_generator/__pycache__
+rm -rf databricks/__pycache__
+rm -f terraform/environments/dev/tfplan
+rm -f terraform/environments/prod/tfplan
+rm -f terraform/environments/shared/tfplan
+rm -f terraform/environments/unity-catalog/tfplan
+echo "  ✓ Cleaned"
+"""
+
+[tasks."clean:all"]
+description = "Full cleanup: remove venv, .terraform dirs, start fresh"
+depends = ["clean"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Deep cleaning..."
+rm -rf data_generator/.venv
+rm -rf terraform/environments/dev/.terraform
+rm -rf terraform/environments/prod/.terraform
+rm -rf terraform/environments/shared/.terraform
+rm -rf terraform/environments/unity-catalog/.terraform
+rm -rf terraform/environments/dev/.terraform.lock.hcl
+rm -rf terraform/environments/prod/.terraform.lock.hcl
+rm -rf terraform/environments/shared/.terraform.lock.hcl
+rm -rf terraform/environments/unity-catalog/.terraform.lock.hcl
+echo "  ✓ Deep cleaned — run 'mise run setup' to re-initialize"
+"""
+
+# ---------------------------------------------------------------------------
+# Info
+# ---------------------------------------------------------------------------
+
+[tasks.info]
+description = "Show project info, tool versions, and current state"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Azure Databricks Platform Demo ==="
+echo ""
+echo "Tool versions:"
+echo "  Terraform: $(terraform version -json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin)["terraform_version"])' 2>/dev/null || echo 'not installed')"
+echo "  Python:    $(python3 --version 2>/dev/null || echo 'not installed')"
+echo "  mise:      $(mise --version 2>/dev/null || echo 'not installed')"
+echo ""
+echo "Environment: ${ENVIRONMENT:-dev}"
+echo ""
+
+echo "Terraform state:"
+for env in shared dev prod unity-catalog; do
+  if [ -f "terraform/environments/$env/terraform.tfstate" ]; then
+    resources=$(python3 -c "import json; print(len(json.load(open('terraform/environments/$env/terraform.tfstate')).get('resources',[])))" 2>/dev/null || echo "?")
+    echo "  $env: $resources resources"
+  else
+    echo "  $env: not deployed"
+  fi
+done
+echo ""
+
+echo "Python venv:"
+if [ -d "data_generator/.venv" ]; then
+  echo "  ✓ exists at data_generator/.venv"
+else
+  echo "  ✗ not created — run: mise run setup"
+fi
+echo ""
+
+echo "Available tasks: mise tasks"
+"""

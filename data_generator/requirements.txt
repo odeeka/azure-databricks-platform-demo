@@ -1,0 +1,5 @@
+# Python data generator dependencies
+# Keep minimal — only what's needed for the sensor data generator
+
+azure-storage-file-datalake>=12.14.0   # ADLS Gen2 client for uploading data
+python-dotenv>=1.0.0                    # Load .env file for local development

@@ -1,0 +1,102 @@
+# =============================================================================
+# Databricks Notebooks — Sync to Workspace
+# =============================================================================
+# Syncs Databricks notebooks from the repo to the Databricks workspace
+# whenever notebook files change.
+#
+# This keeps the notebooks in Git (source of truth) and automatically
+# deploys them to Databricks after merge.
+#
+# Prerequisites:
+#   Set these GitHub repository secrets:
+#     - DATABRICKS_HOST    (e.g., https://adb-123456789.12.azuredatabricks.net)
+#     - DATABRICKS_TOKEN   (personal access token or service principal token)
+#
+# To create a Databricks token:
+#   1. Open Databricks workspace → User Settings → Developer → Access Tokens
+#   2. Generate a new token and save it as a GitHub secret
+# =============================================================================
+
+name: CD — Sync Notebooks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "databricks/notebooks/**"
+
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync-notebooks:
+    name: "Sync Notebooks to Databricks"
+    runs-on: ubuntu-latest
+
+    # Only sync to the dev workspace by default
+    # For prod, create a separate job or use a matrix strategy
+    environment: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # -----------------------------------------------------------------------
+      # Install Databricks CLI v2
+      # -----------------------------------------------------------------------
+      - name: Install Databricks CLI
+        run: |
+          pip install databricks-cli
+
+      # -----------------------------------------------------------------------
+      # Sync notebooks to Databricks workspace
+      # Target path: /Shared/demo-pipeline/
+      # -----------------------------------------------------------------------
+      - name: Sync notebooks to workspace
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          echo "Syncing notebooks to Databricks workspace..."
+          echo "  Host: $DATABRICKS_HOST"
+          echo "  Target: /Shared/demo-pipeline/"
+
+          # Import each notebook
+          for notebook in databricks/notebooks/*.py; do
+            filename=$(basename "$notebook" .py)
+            echo "  Importing: $filename"
+            databricks workspace import \
+              --language PYTHON \
+              --overwrite \
+              "$notebook" \
+              "/Shared/demo-pipeline/$filename"
+          done
+
+          echo ""
+          echo "✓ All notebooks synced to /Shared/demo-pipeline/"
+
+      # -----------------------------------------------------------------------
+      # List deployed notebooks for verification
+      # -----------------------------------------------------------------------
+      - name: Verify deployment
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          echo "Deployed notebooks:"
+          databricks workspace ls /Shared/demo-pipeline/ -l
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Notebooks Synced" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Target: \`/Shared/demo-pipeline/\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Notebook |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|" >> $GITHUB_STEP_SUMMARY
+          for notebook in databricks/notebooks/*.py; do
+            echo "| $(basename $notebook .py) |" >> $GITHUB_STEP_SUMMARY
+          done

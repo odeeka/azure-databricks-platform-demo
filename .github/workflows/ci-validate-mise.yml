@@ -1,0 +1,91 @@
+# =============================================================================
+# CI Pipeline — Validate using mise task runner
+# =============================================================================
+# Same checks as ci-validate.yml but uses mise to:
+#   1. Install exact tool versions (Terraform, Python) from mise.toml
+#   2. Run validation tasks defined in mise.toml
+#
+# Benefits of the mise-based approach:
+#   - Same tool versions locally and in CI (defined in mise.toml)
+#   - Same task definitions locally and in CI (no drift between Makefile and CI)
+#   - Developers run `mise run validate` — CI runs the same thing
+# =============================================================================
+
+name: CI — Validate (mise)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-mise-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: "Validate (mise)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Install mise — this single tool replaces setup-terraform + setup-python
+      # It reads mise.toml and installs the exact versions specified there
+      # -----------------------------------------------------------------------
+      - name: Install mise
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true  # Cache tool installations between runs
+
+      # -----------------------------------------------------------------------
+      # mise install — installs Terraform 1.5 + Python 3.11 from mise.toml
+      # -----------------------------------------------------------------------
+      - name: Install tools via mise
+        run: mise install
+
+      - name: Show tool versions
+        run: |
+          echo "mise version: $(mise --version)"
+          echo "Terraform:    $(terraform version | head -1)"
+          echo "Python:       $(python3 --version)"
+
+      # -----------------------------------------------------------------------
+      # Setup Python virtual environment (needed for lint + dry-run tasks)
+      # -----------------------------------------------------------------------
+      - name: Setup Python environment
+        run: |
+          cd data_generator
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip -q
+          pip install -r requirements.txt -q
+          pip install ruff -q
+
+      # -----------------------------------------------------------------------
+      # Run the same validate task that developers run locally
+      # mise run validate = validate:terraform + validate:python
+      # -----------------------------------------------------------------------
+      - name: Validate Terraform
+        run: mise run validate:terraform
+
+      - name: Validate Python
+        run: mise run validate:python
+
+      # -----------------------------------------------------------------------
+      # Summary — write results to GitHub Actions step summary
+      # -----------------------------------------------------------------------
+      - name: Write summary
+        if: always()
+        run: |
+          echo "## CI Validation Results (mise)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Tool version |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Terraform | $(terraform version | head -1) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python | $(python3 --version) |" >> $GITHUB_STEP_SUMMARY
+          echo "| mise | $(mise --version) |" >> $GITHUB_STEP_SUMMARY

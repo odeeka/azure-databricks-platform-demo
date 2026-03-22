@@ -1,0 +1,127 @@
+# =============================================================================
+# CI Pipeline — Validate on Every Pull Request
+# =============================================================================
+# Runs on every PR to main. Validates:
+#   1. Terraform formatting and syntax for all environments
+#   2. Python linting and a dry-run of the data generator
+#
+# This does NOT deploy anything — it only validates.
+# Deployment happens via the deploy workflow (cd-deploy.yml).
+# =============================================================================
+
+name: CI — Validate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # Job 1: Terraform Validation
+  # ===========================================================================
+  terraform-validate:
+    name: "Terraform — Validate"
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        environment: [dev, prod]
+
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5"
+
+      # -----------------------------------------------------------------------
+      # terraform fmt — checks that all .tf files are properly formatted
+      # Fails if any file needs reformatting (enforces consistent style)
+      # -----------------------------------------------------------------------
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive ../../
+        # Check from root to cover modules too
+
+      # -----------------------------------------------------------------------
+      # terraform init — downloads providers (needed for validate)
+      # Uses -backend=false because we don't need real state for validation
+      # -----------------------------------------------------------------------
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      # -----------------------------------------------------------------------
+      # terraform validate — checks syntax and internal consistency
+      # Catches typos, missing variables, invalid references, etc.
+      # -----------------------------------------------------------------------
+      - name: Terraform Validate
+        run: terraform validate
+
+  # ===========================================================================
+  # Job 2: Python Linting & Dry-Run
+  # ===========================================================================
+  python-validate:
+    name: "Python — Lint & Test"
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: data_generator
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: data_generator/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff  # Fast Python linter
+
+      # -----------------------------------------------------------------------
+      # Lint — checks for common errors and style issues
+      # -----------------------------------------------------------------------
+      - name: Lint with Ruff
+        run: ruff check ../data_generator/ ../databricks/
+
+      # -----------------------------------------------------------------------
+      # Dry-run — generate data locally to verify the script works
+      # Uses --local-only so no Azure credentials are needed
+      # -----------------------------------------------------------------------
+      - name: Dry-run data generator
+        run: python generate_sensor_data.py --local-only --batches 2
+
+      - name: Verify sample data was created
+        run: |
+          echo "Checking that sample data files were created..."
+          file_count=$(find sample_data -name '*.json' | wc -l)
+          echo "Found $file_count JSON files"
+          if [ "$file_count" -lt 1 ]; then
+            echo "ERROR: No data files generated!"
+            exit 1
+          fi
+          echo "✓ Data generator works correctly"
+
+          # Show a sample record for visual inspection in the PR
+          echo ""
+          echo "Sample record:"
+          head -1 $(find sample_data -name '*.json' | head -1) | python -m json.tool
