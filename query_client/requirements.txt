@@ -1,0 +1,2 @@
+databricks-sql-connector>=3.0.0
+azure-identity>=1.15.0
