@@ -45,6 +45,16 @@ output "environment" {
   value       = var.environment
 }
 
+output "key_vault_name" {
+  description = "Name of the environment Key Vault"
+  value       = module.keyvault.key_vault_name
+}
+
+output "key_vault_uri" {
+  description = "URI of the environment Key Vault"
+  value       = module.keyvault.key_vault_uri
+}
+
 # Storage account ID — needed by unity-catalog environment for role assignments
 output "storage_account_id" {
   description = "Resource ID of the ADLS Gen2 storage account"

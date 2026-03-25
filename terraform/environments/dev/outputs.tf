@@ -36,3 +36,8 @@ output "databricks_workspace_url" {
 output "databricks_workspace_id" {
   value = module.platform.databricks_workspace_id
 }
+
+output "key_vault_name" {
+  description = "Name of the environment Key Vault (needed by unity-catalog)"
+  value       = module.platform.key_vault_name
+}

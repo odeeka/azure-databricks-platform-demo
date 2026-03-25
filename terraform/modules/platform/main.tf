@@ -18,6 +18,9 @@
 # Unity Catalog resources are created separately in environments/unity-catalog/
 # =============================================================================
 
+# Current client identity — passed to the Key Vault module for RBAC
+data "azurerm_client_config" "current" {}
+
 # =============================================================================
 # Resource Group
 # =============================================================================
@@ -42,6 +45,21 @@ module "storage" {
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.common_tags
+}
+
+# =============================================================================
+# Key Vault — stores the storage account key as a secret
+# =============================================================================
+module "keyvault" {
+  source = "../keyvault"
+
+  # KV names must be 3-24 chars, globally unique, alphanumeric + hyphens
+  name                        = "kv-${local.name_prefix}"
+  resource_group_name         = module.resource_group.name
+  location                    = module.resource_group.location
+  service_principal_object_id = data.azurerm_client_config.current.object_id
+  storage_account_key         = module.storage.primary_access_key
+  tags                        = local.common_tags
 }
 
 # =============================================================================

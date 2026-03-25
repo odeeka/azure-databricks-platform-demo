@@ -28,6 +28,7 @@ variable "workspace_users" {
   type = list(object({
     user_name    = string
     display_name = string
+    active       = bool
   }))
   default = []
 }

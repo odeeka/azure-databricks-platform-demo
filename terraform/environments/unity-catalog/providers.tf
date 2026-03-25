@@ -35,3 +35,14 @@ provider "databricks" {
   azure_client_secret = var.client_secret
   azure_tenant_id     = var.tenant_id
 }
+
+# Aliased provider for the prod workspace — used for prod-specific resources
+# such as the secret scope that must live on the prod workspace.
+provider "databricks" {
+  alias = "prod"
+  host  = "https://${var.prod_workspace_url}"
+
+  azure_client_id     = var.client_id
+  azure_client_secret = var.client_secret
+  azure_tenant_id     = var.tenant_id
+}

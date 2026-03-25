@@ -59,3 +59,59 @@ module "prod_catalog" {
 
   workspace_users = var.workspace_users
 }
+
+# =============================================================================
+# Databricks Secret Scopes — per workspace
+# Each workspace gets a "storage" scope with the ADLS access key stored as a
+# secret. Notebooks read the key via dbutils.secrets.get() instead of
+# hardcoding it in the notebook source.
+#
+# Flow: ADLS key → Key Vault secret (platform/dev|prod writes it)
+#       → Databricks secret (unity-catalog reads KV → writes to Databricks)
+# =============================================================================
+
+# --- Read the storage key from the dev Key Vault ---
+data "azurerm_key_vault" "dev" {
+  name                = var.dev_key_vault_name
+  resource_group_name = "rg-dbdemo-dev-weu"
+}
+
+data "azurerm_key_vault_secret" "dev_storage_key" {
+  name         = "storage-account-key"
+  key_vault_id = data.azurerm_key_vault.dev.id
+}
+
+# Dev workspace: secret scope + secret (default provider → dev workspace)
+resource "databricks_secret_scope" "dev" {
+  name = "storage"
+}
+
+resource "databricks_secret" "dev_storage_key" {
+  scope        = databricks_secret_scope.dev.name
+  key          = "account-key"
+  string_value = data.azurerm_key_vault_secret.dev_storage_key.value
+}
+
+# --- Read the storage key from the prod Key Vault ---
+data "azurerm_key_vault" "prod" {
+  name                = var.prod_key_vault_name
+  resource_group_name = "rg-dbdemo-prod-weu"
+}
+
+data "azurerm_key_vault_secret" "prod_storage_key" {
+  name         = "storage-account-key"
+  key_vault_id = data.azurerm_key_vault.prod.id
+}
+
+# Prod workspace: secret scope + secret (aliased provider → prod workspace)
+resource "databricks_secret_scope" "prod" {
+  provider = databricks.prod
+  name     = "storage"
+}
+
+resource "databricks_secret" "prod_storage_key" {
+  provider     = databricks.prod
+  scope        = databricks_secret_scope.prod.name
+  key          = "account-key"
+  string_value = data.azurerm_key_vault_secret.prod_storage_key.value
+}

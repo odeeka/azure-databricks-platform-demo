@@ -46,13 +46,19 @@ USE_UNITY_CATALOG = True                   # Set to False to use legacy abfss://
 # handles storage auth automatically — no keys needed!
 #
 # Only set a storage key if UC external location is NOT configured (legacy mode).
+# The key is stored in a Databricks secret scope (backed by Azure Key Vault via
+# Terraform) — never hardcoded in the notebook.
+#
+# Secret path: scope="storage", key="account-key"
+#   Created by: terraform/environments/unity-catalog (databricks_secret resource)
+#   Source:     Azure Key Vault (kv-dbdemo-{env}-weu) → secret "storage-account-key"
 if not USE_UNITY_CATALOG:
-    STORAGE_ACCOUNT_KEY = "YOUR_KEY_HERE"  # From: terraform output -raw storage_account_key
+    STORAGE_ACCOUNT_KEY = dbutils.secrets.get(scope="storage", key="account-key")
     spark.conf.set(
         f"fs.azure.account.key.{STORAGE_ACCOUNT_NAME}.dfs.core.windows.net",
         STORAGE_ACCOUNT_KEY
     )
-    print(f"✓ Configured storage access with account key: {STORAGE_ACCOUNT_NAME}")
+    print(f"✓ Configured storage access with account key (from secret scope): {STORAGE_ACCOUNT_NAME}")
 else:
     print(f"✓ Unity Catalog mode — storage access via managed identity (no key needed)")
 

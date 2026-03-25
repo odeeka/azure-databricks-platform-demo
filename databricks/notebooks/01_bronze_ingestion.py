@@ -113,9 +113,11 @@ df_raw = (
 )
 
 # Add metadata columns — these help with debugging and data lineage
+# Note: input_file_name() is not supported in Unity Catalog mode.
+# Use _metadata.file_path instead (available with Auto Loader / cloudFiles).
 df_bronze = (
     df_raw
-    .withColumn("_source_file", F.input_file_name())
+    .withColumn("_source_file", F.col("_metadata.file_path"))
     .withColumn("_ingested_at", F.current_timestamp())
     .withColumn("_ingestion_date", F.current_date())
 )

@@ -35,7 +35,6 @@ terraform {
 # -----------------------------------------------------------------------------
 resource "databricks_storage_credential" "this" {
   name         = "${var.environment}-storage-credential"
-  force_delete = true # Allow cleanup in demo
 
   azure_managed_identity {
     access_connector_id = var.access_connector_id
@@ -195,6 +194,7 @@ resource "databricks_user" "workspace_users" {
 
   user_name    = each.value.user_name
   display_name = each.value.display_name
+  active = each.value.active
 
   workspace_access       = true
   databricks_sql_access  = true
