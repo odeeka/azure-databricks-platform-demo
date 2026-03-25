@@ -65,6 +65,7 @@ resource "databricks_external_location" "raw" {
 
   credential_name = databricks_storage_credential.this.name
   comment         = "External location for ${var.environment} raw data lake"
+  force_destroy   = true
 
   # Azure RBAC propagation can take 1-2 minutes — wait for the role assignment
   depends_on = [azurerm_role_assignment.data_lake_access]
@@ -77,6 +78,7 @@ resource "databricks_external_location" "bronze" {
 
   credential_name = databricks_storage_credential.this.name
   comment         = "External location for ${var.environment} managed catalog tables"
+  force_destroy   = true
 
   depends_on = [azurerm_role_assignment.data_lake_access]
 }
@@ -140,21 +142,24 @@ resource "databricks_grants" "catalog" {
 #                   {env}.gold.hourly_metrics
 # -----------------------------------------------------------------------------
 resource "databricks_schema" "bronze" {
-  catalog_name = databricks_catalog.this.name
-  name         = "bronze"
-  comment      = "Bronze layer — raw ingested data"
+  catalog_name  = databricks_catalog.this.name
+  name          = "bronze"
+  comment       = "Bronze layer — raw ingested data"
+  force_destroy = true
 }
 
 resource "databricks_schema" "silver" {
-  catalog_name = databricks_catalog.this.name
-  name         = "silver"
-  comment      = "Silver layer — cleaned and validated data"
+  catalog_name  = databricks_catalog.this.name
+  name          = "silver"
+  comment       = "Silver layer — cleaned and validated data"
+  force_destroy = true
 }
 
 resource "databricks_schema" "gold" {
-  catalog_name = databricks_catalog.this.name
-  name         = "gold"
-  comment      = "Gold layer — aggregated analytics-ready data"
+  catalog_name  = databricks_catalog.this.name
+  name          = "gold"
+  comment       = "Gold layer — aggregated analytics-ready data"
+  force_destroy = true
 }
 
 # Grant schema access broadly (demo-friendly; production would be more restrictive)

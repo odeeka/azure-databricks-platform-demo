@@ -73,4 +73,24 @@ module "databricks" {
   location            = module.resource_group.location
   sku                 = var.databricks_sku
   tags                = local.common_tags
+
+  # Cluster policy (optional)
+  enable_cluster_policy          = var.enable_cluster_policy
+  cluster_policy_name            = "${var.environment} - Cost Controlled"
+  cluster_policy_max_workers     = var.cluster_policy_max_workers
+  cluster_policy_node_types      = var.cluster_policy_node_types
+  cluster_policy_spark_version   = var.cluster_policy_spark_version
+
+  # Shared cluster (optional)
+  enable_cluster                  = var.enable_cluster
+  cluster_name                    = "${var.environment}-shared-cluster"
+  cluster_num_workers             = var.cluster_num_workers
+  cluster_autotermination_minutes = var.cluster_autotermination_minutes
+
+  # Pipeline job (optional)
+  enable_pipeline_job      = var.enable_pipeline_job
+  pipeline_job_name        = "${var.environment}-sensor-pipeline"
+  pipeline_notebook_path   = var.pipeline_notebook_path
+  pipeline_notebook_params = var.pipeline_notebook_params
+  pipeline_schedule_cron   = var.pipeline_schedule_cron
 }

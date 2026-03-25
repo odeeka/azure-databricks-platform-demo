@@ -60,3 +60,20 @@ output "storage_account_id" {
   description = "Resource ID of the ADLS Gen2 storage account"
   value       = module.storage.id
 }
+
+# --- Optional cluster resources ---
+
+output "cluster_policy_id" {
+  description = "ID of the cluster policy (null if not enabled)"
+  value       = module.databricks.cluster_policy_id
+}
+
+output "cluster_id" {
+  description = "ID of the shared cluster (null if not enabled)"
+  value       = module.databricks.cluster_id
+}
+
+output "pipeline_job_id" {
+  description = "ID of the pipeline job (null if not enabled)"
+  value       = module.databricks.pipeline_job_id
+}

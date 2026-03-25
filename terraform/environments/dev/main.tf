@@ -40,5 +40,28 @@ module "platform" {
     owner   = "data-engineering-team"
     purpose = "demo"
   }
+
+  # ---------------------------------------------------------------------------
+  # Cluster Policy + Cluster + Pipeline Job — disabled by default
+  # Uncomment the lines below to enable them.
+  # ---------------------------------------------------------------------------
+
+  # enable_cluster_policy        = true
+  # cluster_policy_max_workers   = 4
+  # cluster_policy_node_types    = ["Standard_DS3_v2", "Standard_DS4_v2"]
+  # cluster_policy_spark_version = "15.4.x-scala2.12"   # null = not fixed
+
+  # enable_cluster                  = true
+  # cluster_num_workers             = 1
+  # cluster_autotermination_minutes = 30
+
+  # enable_pipeline_job      = true
+  # pipeline_notebook_path   = "/Repos/main/databricks/notebooks/04_run_full_pipeline"
+  # pipeline_notebook_params = {
+  #   storage_account_name = "stdbdemodevweu"
+  #   catalog_name         = "dev"
+  #   use_unity_catalog    = "True"
+  # }
+  # pipeline_schedule_cron = "0 0 * * * ?"   # every hour (null = no schedule)
 }
 

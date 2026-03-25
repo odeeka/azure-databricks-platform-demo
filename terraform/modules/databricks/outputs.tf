@@ -17,3 +17,20 @@ output "name" {
   description = "The name of the Databricks workspace"
   value       = azurerm_databricks_workspace.this.name
 }
+
+# --- Optional cluster resources ---
+
+output "cluster_policy_id" {
+  description = "ID of the cluster policy (null if not enabled)"
+  value       = var.enable_cluster_policy ? databricks_cluster_policy.this[0].id : null
+}
+
+output "cluster_id" {
+  description = "ID of the shared cluster (null if not enabled)"
+  value       = var.enable_cluster ? databricks_cluster.shared[0].id : null
+}
+
+output "pipeline_job_id" {
+  description = "ID of the pipeline job (null if not enabled)"
+  value       = var.enable_pipeline_job ? databricks_job.pipeline[0].id : null
+}
