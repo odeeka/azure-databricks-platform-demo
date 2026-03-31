@@ -1,17 +1,14 @@
 
 # ---------------------------------------------------------------------------
-# Naming
+# Naming — uses shared naming module to avoid duplicating region lookups
 # ---------------------------------------------------------------------------
+module "naming" {
+  source   = "../../modules/naming"
+  location = var.location
+}
+
 locals {
-  region_short = lookup({
-    "eastus"      = "eus"
-    "eastus2"     = "eus2"
-    "westus2"     = "wus2"
-    "westeurope"  = "weu"
-    "northeurope" = "neu"
-    "centralus"   = "cus"
-    "uksouth"     = "uks"
-  }, var.location, replace(var.location, "/[aeiou]/", ""))
+  region_short = module.naming.region_short
 
   common_tags = {
     project    = "databricks-demo"

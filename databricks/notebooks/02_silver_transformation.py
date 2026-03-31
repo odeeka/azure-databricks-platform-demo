@@ -44,17 +44,9 @@ from delta.tables import DeltaTable
 
 # COMMAND ----------
 
-# Widget definitions — defaults for standalone execution
-dbutils.widgets.text("storage_account_name", "stdbdemodevweu", "Storage Account")
-dbutils.widgets.text("catalog_name", "dev", "Catalog Name")
-dbutils.widgets.dropdown("use_unity_catalog", "True", ["True", "False"], "Use Unity Catalog")
+# MAGIC %run ./_config
 
 # COMMAND ----------
-
-# Configuration
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account_name")
-CATALOG = dbutils.widgets.get("catalog_name")
-USE_UC = dbutils.widgets.get("use_unity_catalog") == "True"
 
 if USE_UC:
     BRONZE_TABLE = f"{CATALOG}.bronze.sensor_readings"
@@ -217,38 +209,52 @@ df_quarantine = (
 
 # COMMAND ----------
 
-# Write clean Silver table
+# Write clean Silver table — use MERGE to preserve historical data
 if USE_UC:
-    (
-        df_clean.write
-        .format("delta")
-        .mode("overwrite")
-        .saveAsTable(SILVER_CLEAN_TABLE)
-    )
+    if table_exists(SILVER_CLEAN_TABLE):
+        delta_table = DeltaTable.forName(spark, SILVER_CLEAN_TABLE)
+        (
+            delta_table.alias("target")
+            .merge(df_clean.alias("source"), "target.event_id = source.event_id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
+            .execute()
+        )
+    else:
+        df_clean.write.format("delta").saveAsTable(SILVER_CLEAN_TABLE)
 else:
-    (
-        df_clean.write
-        .format("delta")
-        .mode("overwrite")
-        .partitionBy("event_hour")
-        .save(SILVER_CLEAN_PATH)
-    )
+    if path_exists(SILVER_CLEAN_PATH):
+        delta_table = DeltaTable.forPath(spark, SILVER_CLEAN_PATH)
+        (
+            delta_table.alias("target")
+            .merge(df_clean.alias("source"), "target.event_id = source.event_id")
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
+            .execute()
+        )
+    else:
+        (
+            df_clean.write
+            .format("delta")
+            .partitionBy("event_hour")
+            .save(SILVER_CLEAN_PATH)
+        )
 print(f"✓ Silver clean table written: {df_clean.count()} records")
 
-# Write quarantine table
+# Write quarantine table — APPEND to preserve history of bad records
 if df_quarantine.count() > 0:
     if USE_UC:
         (
             df_quarantine.write
             .format("delta")
-            .mode("overwrite")
+            .mode("append")
             .saveAsTable(SILVER_QUARANTINE_TABLE)
         )
     else:
         (
             df_quarantine.write
             .format("delta")
-            .mode("overwrite")
+            .mode("append")
             .save(SILVER_QUARANTINE_PATH)
         )
     print(f"✓ Silver quarantine table written: {df_quarantine.count()} records")

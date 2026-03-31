@@ -26,16 +26,9 @@ from pyspark.sql import functions as F
 
 # COMMAND ----------
 
-# Widget definitions — defaults for standalone execution
-dbutils.widgets.text("storage_account_name", "stdbdemodevweu", "Storage Account")
-dbutils.widgets.text("catalog_name", "dev", "Catalog Name")
-dbutils.widgets.dropdown("use_unity_catalog", "True", ["True", "False"], "Use Unity Catalog")
+# MAGIC %run ./_config
 
 # COMMAND ----------
-
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account_name")
-CATALOG = dbutils.widgets.get("catalog_name")
-USE_UC = dbutils.widgets.get("use_unity_catalog") == "True"
 
 if USE_UC:
     # Unity Catalog managed table references

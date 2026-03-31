@@ -31,6 +31,47 @@ variable "tags" {
 }
 
 # =============================================================================
+# VNet Injection — optional, disabled by default
+# When enabled, Databricks workers run inside your own Azure VNet for
+# network isolation. Requires pre-created VNet, subnets, and NSG associations.
+# =============================================================================
+variable "vnet_id" {
+  description = "VNet ID for Databricks workspace VNet injection (null = Databricks-managed networking)"
+  type        = string
+  default     = null
+}
+
+variable "public_subnet_name" {
+  description = "Name of the public (host) subnet for Databricks VNet injection"
+  type        = string
+  default     = ""
+}
+
+variable "private_subnet_name" {
+  description = "Name of the private (container) subnet for Databricks VNet injection"
+  type        = string
+  default     = ""
+}
+
+variable "public_subnet_nsg_association_id" {
+  description = "NSG association ID for the public subnet"
+  type        = string
+  default     = null
+}
+
+variable "private_subnet_nsg_association_id" {
+  description = "NSG association ID for the private subnet"
+  type        = string
+  default     = null
+}
+
+variable "no_public_ip" {
+  description = "Whether to disable public IPs for Databricks worker VMs (Secure Cluster Connectivity)"
+  type        = bool
+  default     = false
+}
+
+# =============================================================================
 # Cluster Policy — optional, disabled by default
 # =============================================================================
 variable "enable_cluster_policy" {

@@ -45,18 +45,9 @@ from pyspark.sql.types import (
 
 # COMMAND ----------
 
-# Widget definitions — these are set by 04_run_full_pipeline when called as a
-# child notebook. When running standalone, they provide editable defaults.
-dbutils.widgets.text("storage_account_name", "stdbdemodevweu", "Storage Account")
-dbutils.widgets.text("catalog_name", "dev", "Catalog Name")
-dbutils.widgets.dropdown("use_unity_catalog", "True", ["True", "False"], "Use Unity Catalog")
+# MAGIC %run ./_config
 
 # COMMAND ----------
-
-# Configuration
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account_name")
-CATALOG = dbutils.widgets.get("catalog_name")
-USE_UC = dbutils.widgets.get("use_unity_catalog") == "True"
 
 # ADLS paths — raw input is always from ADLS (external to UC)
 RAW_PATH = f"abfss://raw@{STORAGE_ACCOUNT}.dfs.core.windows.net/sensors/"

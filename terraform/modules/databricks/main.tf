@@ -28,6 +28,20 @@ resource "azurerm_databricks_workspace" "this" {
   # We give it a predictable name so it's easy to identify.
   managed_resource_group_name = "${var.name}-managed-rg"
 
+  # Optional: VNet injection for network isolation
+  # When vnet_id is set, Databricks workers run inside your own VNet.
+  dynamic "custom_parameters" {
+    for_each = var.vnet_id != null ? [1] : []
+    content {
+      virtual_network_id                                   = var.vnet_id
+      public_subnet_name                                   = var.public_subnet_name
+      private_subnet_name                                  = var.private_subnet_name
+      public_subnet_network_security_group_association_id   = var.public_subnet_nsg_association_id
+      private_subnet_network_security_group_association_id  = var.private_subnet_nsg_association_id
+      no_public_ip                                         = var.no_public_ip
+    }
+  }
+
   tags = var.tags
 }
 

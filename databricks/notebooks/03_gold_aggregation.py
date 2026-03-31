@@ -40,20 +40,13 @@
 
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
+from delta.tables import DeltaTable
 
 # COMMAND ----------
 
-# Widget definitions — defaults for standalone execution
-dbutils.widgets.text("storage_account_name", "stdbdemodevweu", "Storage Account")
-dbutils.widgets.text("catalog_name", "dev", "Catalog Name")
-dbutils.widgets.dropdown("use_unity_catalog", "True", ["True", "False"], "Use Unity Catalog")
+# MAGIC %run ./_config
 
 # COMMAND ----------
-
-# Configuration
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account_name")
-CATALOG = dbutils.widgets.get("catalog_name") if dbutils.widgets.get("catalog_name") else ""
-USE_UC = dbutils.widgets.get("use_unity_catalog") == "True"
 
 # Unity Catalog managed table names
 SILVER_TABLE      = f"{CATALOG}.silver.sensor_readings_clean"
@@ -128,22 +121,29 @@ df_hourly = (
     .orderBy("device_id", "event_hour")
 )
 
-# Write hourly metrics
-if USE_UC:
-    (
-        df_hourly.write
-        .mode("overwrite")
-        .partitionBy("device_id")
-        .saveAsTable(GOLD_HOURLY_TABLE)
-    )
-else:
-    (
-        df_hourly.write
-        .format("delta")
-        .mode("overwrite")
-        .partitionBy("device_id")
-        .save(GOLD_HOURLY_PATH)
-    )
+# Write hourly metrics — MERGE to preserve historical data
+def _write_or_merge(df, uc_table, adls_path, merge_keys):
+    """Write a DataFrame using MERGE if the target exists, otherwise create it."""
+    if USE_UC:
+        if table_exists(uc_table):
+            delta_t = DeltaTable.forName(spark, uc_table)
+            merge_cond = " AND ".join(f"target.{k} = source.{k}" for k in merge_keys)
+            delta_t.alias("target").merge(
+                df.alias("source"), merge_cond
+            ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+        else:
+            df.write.format("delta").saveAsTable(uc_table)
+    else:
+        if path_exists(adls_path):
+            delta_t = DeltaTable.forPath(spark, adls_path)
+            merge_cond = " AND ".join(f"target.{k} = source.{k}" for k in merge_keys)
+            delta_t.alias("target").merge(
+                df.alias("source"), merge_cond
+            ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+        else:
+            df.write.format("delta").save(adls_path)
+
+_write_or_merge(df_hourly, GOLD_HOURLY_TABLE, GOLD_HOURLY_PATH, ["device_id", "event_hour"])
 
 print(f"✓ Hourly metrics: {df_hourly.count()} rows")
 df_hourly.show(10, truncate=False)
@@ -185,20 +185,8 @@ df_device_summary = (
     .withColumn("_aggregated_at", F.current_timestamp())
 )
 
-# Write device summary
-if USE_UC:
-    (
-        df_device_summary.write
-        .mode("overwrite")
-        .saveAsTable(GOLD_DEVICE_TABLE)
-    )
-else:
-    (
-        df_device_summary.write
-        .format("delta")
-        .mode("overwrite")
-        .save(GOLD_DEVICE_PATH)
-    )
+# Write device summary — MERGE by device_id
+_write_or_merge(df_device_summary, GOLD_DEVICE_TABLE, GOLD_DEVICE_PATH, ["device_id"])
 
 print(f"✓ Device summary: {df_device_summary.count()} devices")
 df_device_summary.show(truncate=False)
@@ -256,21 +244,9 @@ df_aqi_alerts = (
     .withColumn("_alerted_at", F.current_timestamp())
 )
 
-# Write AQI alerts
+# Write AQI alerts — MERGE by device_id + event_hour
 if df_aqi_alerts.count() > 0:
-    if USE_UC:
-        (
-            df_aqi_alerts.write
-            .mode("overwrite")
-            .saveAsTable(GOLD_AQI_TABLE)
-        )
-    else:
-        (
-            df_aqi_alerts.write
-            .format("delta")
-            .mode("overwrite")
-            .save(GOLD_AQI_PATH)
-        )
+    _write_or_merge(df_aqi_alerts, GOLD_AQI_TABLE, GOLD_AQI_PATH, ["device_id", "event_hour"])
     print(f"✓ AQI alerts: {df_aqi_alerts.count()} alert periods")
     df_aqi_alerts.show(10, truncate=False)
 else:

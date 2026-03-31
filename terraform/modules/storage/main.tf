@@ -21,6 +21,17 @@ resource "azurerm_storage_account" "this" {
   # Enable ADLS Gen2 (hierarchical namespace)
   is_hns_enabled = true
 
+  # Optional: Network rules to restrict access (disabled by default)
+  dynamic "network_rules" {
+    for_each = var.network_rules_enabled ? [1] : []
+    content {
+      default_action             = var.network_rules_default_action
+      ip_rules                   = var.network_rules_ip_rules
+      virtual_network_subnet_ids = var.network_rules_subnet_ids
+      bypass                     = ["AzureServices"]
+    }
+  }
+
   tags = var.tags
 }
 
@@ -54,4 +65,30 @@ resource "azurerm_storage_container" "gold" {
   name                  = "gold"
   storage_account_id    = azurerm_storage_account.this.id
   container_access_type = "private"
+}
+
+# -----------------------------------------------------------------------------
+# Lifecycle Policy — auto-delete old raw data to control storage costs
+# Enabled by default for the "raw" container (90 days).
+# Adjust retention_days or set lifecycle_policy_enabled = false to disable.
+# -----------------------------------------------------------------------------
+resource "azurerm_storage_management_policy" "lifecycle" {
+  count              = var.lifecycle_policy_enabled ? 1 : 0
+  storage_account_id = azurerm_storage_account.this.id
+
+  rule {
+    name    = "delete-old-raw-data"
+    enabled = true
+
+    filters {
+      prefix_match = ["raw/"]
+      blob_types   = ["blockBlob"]
+    }
+
+    actions {
+      base_blob {
+        delete_after_days_since_modification_greater_than = var.raw_data_retention_days
+      }
+    }
+  }
 }

@@ -1,19 +1,15 @@
 # -----------------------------------------------------------------------------
-# Local values — computed naming conventions
+# Naming — uses shared naming module to avoid duplicating region lookups
 # Pattern: {resource_prefix}-dbdemo-{environment}-{region_short}
 # Example: rg-dbdemo-dev-eus2
 # -----------------------------------------------------------------------------
+module "naming" {
+  source   = "../naming"
+  location = var.location
+}
+
 locals {
-  # Short region code for naming (keeps names compact)
-  region_short = lookup({
-    "eastus"      = "eus"
-    "eastus2"     = "eus2"
-    "westus2"     = "wus2"
-    "westeurope"  = "weu"
-    "northeurope" = "neu"
-    "centralus"   = "cus"
-    "uksouth"     = "uks"
-  }, var.location, replace(var.location, "/[aeiou]/", ""))
+  region_short = module.naming.region_short
 
   # Common tags applied to all resources
   common_tags = merge(var.tags, {

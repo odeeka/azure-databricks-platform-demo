@@ -34,17 +34,11 @@ import time
 
 # COMMAND ----------
 
-# Widget definitions — editable at the top of the notebook
-dbutils.widgets.text("storage_account_name", "stdbdemodevweu", "Storage Account")
-dbutils.widgets.text("catalog_name", "dev", "Catalog Name")
-dbutils.widgets.dropdown("use_unity_catalog", "True", ["True", "False"], "Use Unity Catalog")
+# MAGIC %run ./_config
 
 # COMMAND ----------
 
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account_name")
-CATALOG = dbutils.widgets.get("catalog_name")
-USE_UC = dbutils.widgets.get("use_unity_catalog")
-USE_UC_BOOL = USE_UC == "True"
+USE_UC_BOOL = USE_UC  # convenience alias
 
 print(f"Storage account: {STORAGE_ACCOUNT}")
 if USE_UC_BOOL:
@@ -56,7 +50,7 @@ print("=" * 60)
 NOTEBOOK_ARGS = {
     "storage_account_name": STORAGE_ACCOUNT,
     "catalog_name": CATALOG,
-    "use_unity_catalog": USE_UC,
+    "use_unity_catalog": dbutils.widgets.get("use_unity_catalog"),
 }
 
 # COMMAND ----------
@@ -114,6 +108,25 @@ print(f"✓ Gold complete ({elapsed:.1f}s)")
 
 # MAGIC %md
 # MAGIC ## Pipeline Complete!
+
+# COMMAND ----------
+
+# Step 4: Optimize Delta tables (compact small files and clean up old versions)
+if USE_UC_BOOL:
+    print("▶ Optimizing Delta tables...")
+    for tbl in [
+        f"{CATALOG}.bronze.sensor_readings",
+        f"{CATALOG}.silver.sensor_readings_clean",
+        f"{CATALOG}.gold.hourly_metrics",
+        f"{CATALOG}.gold.device_summary",
+    ]:
+        try:
+            spark.sql(f"OPTIMIZE {tbl}")
+            spark.sql(f"VACUUM {tbl} RETAIN 168 HOURS")
+            print(f"  ✓ {tbl}")
+        except Exception as e:
+            print(f"  ✗ {tbl}: {e}")
+    print("✓ Optimization complete")
 
 # COMMAND ----------
 

@@ -23,3 +23,45 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# =============================================================================
+# Network Rules — optional, disabled by default
+# =============================================================================
+variable "network_rules_enabled" {
+  description = "Whether to enable storage account network rules (firewall)"
+  type        = bool
+  default     = false
+}
+
+variable "network_rules_default_action" {
+  description = "Default action when no rule matches: Allow or Deny"
+  type        = string
+  default     = "Deny"
+}
+
+variable "network_rules_ip_rules" {
+  description = "List of IP addresses or CIDR ranges allowed to access the storage account"
+  type        = list(string)
+  default     = []
+}
+
+variable "network_rules_subnet_ids" {
+  description = "List of VNet subnet IDs allowed to access the storage account"
+  type        = list(string)
+  default     = []
+}
+
+# =============================================================================
+# Lifecycle Policy — optional, enabled by default
+# =============================================================================
+variable "lifecycle_policy_enabled" {
+  description = "Whether to enable lifecycle management for the raw container"
+  type        = bool
+  default     = true
+}
+
+variable "raw_data_retention_days" {
+  description = "Days to retain raw data before auto-deletion (only when lifecycle_policy_enabled = true)"
+  type        = number
+  default     = 90
+}
